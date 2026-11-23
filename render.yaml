@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: pixel-duel
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: '1'
+      - key: ALLOWED_ORIGINS
+        value: https://yss907732349.github.io
