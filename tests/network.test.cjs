@@ -101,6 +101,36 @@ test('expired disconnect releases seat and rejects stale reconnect tokens', asyn
   reconnect.send({ type: 'resume', code, token: seatA.token }); assert.match((await failed).message, /失效/);
 });
 
+test('valid token takes over an active socket during refresh without losing the match or detaching the new seat', async t => {
+  const f = await fixture(t), { a, b, code, seatA } = await f.pair(); await f.start(a, b);
+  const room = f.rooms.get(code);
+  room.match.players[1].hp = 153;
+  const invalid = await f.connect(), rejected = invalid.next(m => m.type === 'error');
+  invalid.send({ type: 'resume', code, token: '0'.repeat(48) });
+  assert.match((await rejected).message, /失效/); assert.equal(a.ws.readyState, WebSocket.OPEN);
+  const replacement = await f.connect();
+  const oldNotice = a.next(m => m.type === 'closed'), oldClosed = once(a.ws, 'close');
+  const restored = replacement.next(m => m.type === 'joined');
+  const pausedA = replacement.next(m => m.type === 'state' && m.phase === 'paused');
+  const pausedB = b.next(m => m.type === 'state' && m.phase === 'paused');
+  a.send({ type: 'move', direction: { x: 0, y: -1 } });
+  replacement.send({ type: 'resume', code, token: seatA.token });
+  assert.equal((await restored).playerId, 0);
+  assert.match((await oldNotice).message, /新页面/);
+  for (const state of await Promise.all([pausedA, pausedB])) {
+    assert.equal(state.round, 1); assert.equal(state.match.players[1].hp, 153);
+    assert.equal(state.match.paused, true); assert.ok(state.players.every(p => p.connected && !p.ready));
+  }
+  await oldClosed;
+  assert.equal(room.phase, 'paused'); assert.ok(room.slots[0].ws); assert.ok(room.slots.every(p => p.move === null && !p.ready));
+  const frozenTime = room.match.time; await sleep(50); assert.equal(room.match.time, frozenTime);
+  const resumed = await f.start(replacement, b); assert.equal(resumed.round, 1); assert.equal(resumed.match.players[1].hp, 153);
+  await sleep(250); // Preserve the pre-refresh movement cooldown as part of the same round.
+  const beforeX = room.match.players[0].x;
+  const moved = b.next(m => m.type === 'state' && m.match.players[0].x === beforeX + 1);
+  replacement.send({ type: 'input', action: 'move', direction: { x: 1, y: 0 } }); await moved;
+});
+
 test('server resolves damage and broadcasts both first and second round endings', async t => {
   const f = await fixture(t), { a, b, code } = await f.pair();
   const first = await f.start(a, b); assert.equal(first.match.paused, false); assert.equal(first.match.winner, null);

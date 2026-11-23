@@ -127,10 +127,21 @@ function createDuelServer(options = {}) {
       if (!room) { error(ws, '房间不存在或已关闭。'); return; }
       if (packet.type === 'resume') {
         if (typeof packet.token !== 'string' || !/^[a-f0-9]{48}$/.test(packet.token)) { error(ws, '重连凭证已失效，请重新加入。'); return; }
-        const id = room.slots.findIndex(p => p && !p.ws && p.expiresAt > now && crypto.timingSafeEqual(Buffer.from(p.token), Buffer.from(packet.token)));
+        // A refreshed tab can reconnect before the old TCP connection closes.
+        // The token authenticates the seat; socket liveness must not reject it.
+        const id = room.slots.findIndex(p => p && (p.ws || p.expiresAt > now) && crypto.timingSafeEqual(Buffer.from(p.token), Buffer.from(packet.token)));
         if (id < 0) { error(ws, '重连凭证已失效，请重新加入。'); return; }
+        const seat = room.slots[id], previousSocket = seat.ws;
+        if (previousSocket) {
+          send(previousSocket, { type: 'closed', message: '当前席位已在新页面恢复，此页面已退出房间。' });
+          previousSocket.room = null;
+          seat.ws = null;
+          previousSocket.close(1000, 'Seat resumed in another connection');
+        }
+        room.match.paused = true;
+        room.slots.forEach(p => { if (p) { p.ready = false; p.move = null; } });
         room.phase = room.slots.every(p => p && (p.ws || p === room.slots[id])) ? (room.round ? 'paused' : 'ready') : 'waiting';
-        joined(ws, room, id, room.slots[id]); return;
+        joined(ws, room, id, seat); return;
       }
       if (!passwordValid(packet.password)) { error(ws, '房间号或密码不正确。'); return; }
       const suppliedHash = await derivePassword(packet.password, room.salt, 32);
