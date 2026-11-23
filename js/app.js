@@ -25,8 +25,12 @@
  function applyNetworkState(data){
   if(!network.active)return;
   networkState=data;
-  if(data.round!==networkRound){screenFX.clear();lastEvent=0;endingAt=0;networkRound=data.round;renderer.setMatch(match);}
-  Object.assign(match,data.match);running=data.phase==='playing';
+  if(data.round!==networkRound){match.reset('duel');screenFX.clear();lastEvent=0;endingAt=0;networkRound=data.round;renderer.setMatch(match);}
+  // Keep player identities within a round: effects use a new array to detect a restart.
+  const {players:incomingPlayers,...snapshot}=data.match;
+  Object.assign(match,snapshot);
+  incomingPlayers.forEach((player,id)=>Object.assign(match.players[id],player));
+  running=data.phase==='playing';
   const playing=data.phase==='playing',seat=network.session.playerId,me=data.players[seat],other=data.players[1-seat];
   if(!playing){held.clear();lastMoveKey='';screenFX.clear();}
   $('room-ready').disabled=playing||!other.connected||me.ready;
